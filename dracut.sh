@@ -1255,12 +1255,12 @@ if ! [[ $outfile ]]; then
     fi
 
     if [[ $uefi == "yes" ]]; then
-        if [[ -n $uefi_secureboot_key && -z $uefi_secureboot_cert ]] || [[ -z $uefi_secureboot_key && -n $uefi_secureboot_cert ]]; then
-            dfatal "Need 'uefi_secureboot_key' and 'uefi_secureboot_cert' both to be set."
+        if [[ -s $uefi_secureboot_key && ! -s $uefi_secureboot_cert ]] || [[ ! -s $uefi_secureboot_key && -s $uefi_secureboot_cert ]]; then
+            dfatal "Need 'uefi_secureboot_key' and 'uefi_secureboot_cert' both to be set as a path to a non-empty file."
             exit 1
         fi
 
-        if [[ -n $uefi_secureboot_key && -n $uefi_secureboot_cert ]] && ! command -v sbsign &> /dev/null; then
+        if [[ -s $uefi_secureboot_key && -s $uefi_secureboot_cert ]] && ! command -v sbsign &> /dev/null; then
             dfatal "Need 'sbsign' to create a signed UEFI executable."
             exit 1
         fi
