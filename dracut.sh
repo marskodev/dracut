@@ -294,6 +294,12 @@ Creates initial ramdisk images for preloading modules
   --uefi-splash-image [FILE]
                         Use [FILE] as a splash image when creating an UEFI
                          executable. Requires bitmap (.bmp) image format.
+  --uefi-secureboot-key [FILE]
+                        Use [FILE] as the Secure Boot key to create a signed
+                         UEFI executable.
+  --uefi-secureboot-cert [FILE]
+                        Use [FILE] as the Secure Boot certificate to create a
+                         signed UEFI executable.
   --kernel-image [FILE] Location of the kernel image.
   --sbat [PARAMETERS]   The SBAT parameters to be added to .sbat.
                          The string "sbat,1,SBAT Version,sbat,1,
@@ -484,6 +490,8 @@ rearrange_params() {
             --long no-ukify \
             --long uefi-stub: \
             --long uefi-splash-image: \
+            --long uefi-secureboot-key: \
+            --long uefi-secureboot-cert: \
             --long kernel-image: \
             --long sbat: \
             --long no-hostonly-i18n \
@@ -939,6 +947,16 @@ while :; do
                     PARMS_TO_STORE+=" '$2'"
                     shift
                     ;;
+                --uefi-secureboot-key)
+                    uefi_secureboot_key_l="$2"
+                    PARMS_TO_STORE+=" '$2'"
+                    shift
+                    ;;
+                --uefi-secureboot-cert)
+                    uefi_secureboot_cert_l="$2"
+                    PARMS_TO_STORE+=" '$2'"
+                    shift
+                    ;;
                 --kernel-image)
                     kernel_image_l="$2"
                     PARMS_TO_STORE+=" '$2'"
@@ -1218,6 +1236,8 @@ drivers_dir="${drivers_dir%"${drivers_dir##*[!/]}"}"
 [[ $ukify_l ]] && ukify=$ukify_l
 [[ $uefi_stub_l ]] && uefi_stub=$(path_rel_to_abs "$uefi_stub_l")
 [[ $uefi_splash_image_l ]] && uefi_splash_image=$(path_rel_to_abs "$uefi_splash_image_l")
+[[ $uefi_secureboot_key_l ]] && uefi_secureboot_key=$(path_rel_to_abs "$uefi_secureboot_key_l")
+[[ $uefi_secureboot_cert_l ]] && uefi_secureboot_cert=$(path_rel_to_abs "$uefi_secureboot_cert_l")
 [[ $kernel_image_l ]] && kernel_image=$(path_rel_to_abs "$kernel_image_l")
 [[ $sbat_l ]] && sbat="$sbat_l"
 [[ $machine_id_l ]] && machine_id="$machine_id_l"
