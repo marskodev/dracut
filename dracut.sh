@@ -285,6 +285,44 @@ Creates initial ramdisk images for preloading modules
   --loginstall [DIR]    Log all files installed from the host to [DIR].
   --uefi                Create an UEFI executable with the kernel cmdline and
                          kernel combined.
+  --uefi-secureboot-cert [FILE]
+                        Use [FILE] as the certificate to sign the created UEFI
+                         executable. Requires a corresponding key to be set in
+                         addition. Required when using sbsign (default), or
+                         systemd-sbsign.
+  --uefi-secureboot-key [FILE]
+                        Use [FILE] as the private key to sign the created UEFI
+                         executable. Requires a corresponding certificate to be
+                         set in addition. Required when using sbsign (default),
+                         or systemd-sbsign.
+  
+  --sign-tool [TOOL]    Use [TOOL] as the signing tool when signing the created
+                         UEFI executable. Supported tools are sbsign (default),
+                         pesign, systemd-sbsign, and sbctl. [TOOL] specified must
+                         be installed first.
+  --uefi-secureboot-cert-name [NAME]
+                        The certificate nickname in the NSS key database to use
+                         when signing the created UEFI executable. Requried
+                         when using pesign.
+  --uefi-secureboot-cert-dir [DIRECTORY]
+                        The directory for the NSS key database to use when
+                         signing the created UEFI executable. Optional when
+                         using pesign, and is set to pesign default when
+                         unset.
+  --uefi-secureboot-engine [ENGINE]
+                        Use [ENGINE] as an OpenSSL engine when signing the
+                         created UEFI executable. E. g. "pkcs11"
+                         Optional when using sbsign or systemd-sbsign.
+                         Incompatible with --uefi-secureboot-key-src.
+  --uefi-secureboot-key-provider [PROVIDER]
+                        Use [PROVIDER] to specify an OpenSSL provider for the
+                         key, when signing the created UEFI executable.
+                         Optional when using systemd-sbsign. Incompatiable with
+                         --uefi-secureboot-engine.
+  --uefi-secureboot-cert-provider [PROVIDER]
+                        Use [PROVIDER] to specify an OpenSSL provider for the
+                         certificate, when signing the created UEFI executable.
+                         Optional when using systemd-sbsign.
   --ukify               Enables ukify.
   --no-uefi             Disables UEFI mode.
   --no-ukify            Disables ukify.
@@ -1255,13 +1293,42 @@ if ! [[ $outfile ]]; then
     fi
 
     if [[ $uefi == "yes" ]]; then
-        if [[ -n $uefi_secureboot_key && -z $uefi_secureboot_cert ]] || [[ -z $uefi_secureboot_key && -n $uefi_secureboot_cert ]]; then
-            dfatal "Need 'uefi_secureboot_key' and 'uefi_secureboot_cert' both to be set."
+        if [[ -n $sign_tool ]]; then
+            if [[ ! "$sign_tool" =~ ^(sbsign|pesign|systemd-sbsign|sbctl)$ ]]; then
+                dfatal "$sign_tool is not a supported signing tool."
+                exit 1
+            elif ! command $sign_tool &> /dev/null; then
+                dfatal "Specified signing tool '$sign_tool' not found."
+                exit 1
+            fi
+        elif ! command -v sbsign &> /dev/null; then
+            dfatal "Need 'sbsign' to create a signed UEFI executable."
+            exit 1
+        else
+            sign_tool=sbsign
+        fi
+        if [[ "$sign_tool" =~ ^(sbsign|systemd-sbsign)$ ]] \
+            && { [[ -s $uefi_secureboot_key && ! -s $uefi_secureboot_cert ]] \
+                || [[ ! -s $uefi_secureboot_key && -s $uefi_secureboot_cert ]] \
+                || [[ -n $uefi_secureboot_key && ! -s $uefi_secureboot_key ]] \
+                || [[ -n $uefi_secureboot_cert && ! -s $uefi_secureboot_cert ]]; }; then
+            dfatal "Need 'uefi_secureboot_key' and 'uefi_secureboot_cert' both to be set to a non-empty file when using ${sign_tool}."
             exit 1
         fi
+        if [[ "$sign_tool" = "pesign" ]]; then
+            if [[ -z $uefi_secureboot_cert_name ]]; then
+                dfatal "Need 'uefi_secureboot_cert_name' to be set when using ${sign_tool}."
+                exit 1
+            fi
+            
+            if [[ -n $uefi_secureboot_dir && ! -d $uefi_secureboot_dir ]]; then
+                dfatal "Need 'uefi_secureboot_cert_dir' to be set to a directory when using ${sign_tool}."
+                exit 1
+            fi
+        fi
 
-        if [[ -n $uefi_secureboot_key && -n $uefi_secureboot_cert ]] && ! command -v sbsign &> /dev/null; then
-            dfatal "Need 'sbsign' to create a signed UEFI executable."
+        if [[ -n $uefi_secureboot_engine && -n $uefi_secureboot_key_provider ]]; then
+            dfatal "'uefi_secureboot_engine' and 'uefi_secureboot_key_provider' cannot be set at the same time."
             exit 1
         fi
 
@@ -3595,6 +3662,12 @@ if [[ $uefi == yes ]]; then
             echo "$sbat" | sed "/${SBAT_DEFAULT//\//\\/}/d" >> "$ukify_sbat"
         fi
 
+        # ukify does not support sbctl as a signing tool, so signing will be done after
+        if [[ "$sign_tool" = "sbctl" ]]; then
+            unset uefi_secureboot_engine uefi_secureboot_key uefi_secureboot_key_provider uefi_secureboot_cert_provider uefi_secureboot_cert sign_tool
+            _sbctl=true
+        fi
+
         if ukify build \
             --linux "$kernel_image" \
             --initrd "${DRACUT_TMPDIR}/initramfs.img" \
@@ -3607,9 +3680,23 @@ if [[ $uefi == yes ]]; then
             ${uefi_secureboot_engine:+--signing-engine "$uefi_secureboot_engine"} \
             ${uefi_secureboot_key:+--secureboot-private-key "$uefi_secureboot_key"} \
             ${uefi_secureboot_cert:+--secureboot-certificate "$uefi_secureboot_cert"} \
+            ${uefi_secureboot_key_provider:+--signing-provider "$uefi_secureboot_key_provider"} \
+            ${uefi_secureboot_cert_provider:+--certificate-provider "$uefi_secureboot_cert_provider"} \
+            ${sign_tool:+--signtool "$sign_tool"} \
             --output "${uefi_outdir}/linux.efi"; then
 
-            if cp --reflink=auto "${uefi_outdir}/linux.efi" "$outfile"; then
+            if [[ -n $_sbctl ]]; then
+                if sbctl \
+                    sign \
+                    "${uefi_outdir}/linux.efi" \
+                    --output "$outfile" \
+                    && [[ ! "$(sbctl verify "${outfile}")" =~ 'is not signed' ]]; then
+                    dinfo "*** Creating signed UEFI image file '$outfile' done ***"
+                else
+                    dfatal "*** Creating signed UEFI image file '$outfile' failed ***"
+                    exit 1
+                fi
+            elif cp --reflink=auto "${uefi_outdir}/linux.efi" "$outfile"; then
                 dinfo "*** Creating UEFI image file '$outfile' done ***"
             else
                 rm -f -- "$outfile"
@@ -3632,15 +3719,59 @@ if [[ $uefi == yes ]]; then
             --add-section .initrd="${DRACUT_TMPDIR}/initramfs.img" --change-section-vma .initrd="$(printf 0x%x "$uefi_initrd_offs")" \
             --image-base="$(printf 0x%x "$base_image")" \
             "$tmp_uefi_stub" "${uefi_outdir}/linux.efi"; then
-            if [[ -n ${uefi_secureboot_key} && -n ${uefi_secureboot_cert} ]]; then
-                if sbsign \
-                    ${uefi_secureboot_engine:+--engine "$uefi_secureboot_engine"} \
-                    --key "${uefi_secureboot_key}" \
-                    --cert "${uefi_secureboot_cert}" \
-                    --output "$outfile" "${uefi_outdir}/linux.efi" \
-                    && sbverify --cert "${uefi_secureboot_cert}" "$outfile" > /dev/null 2>&1; then
-                    dinfo "*** Creating signed UEFI image file '$outfile' done ***"
-                else
+            if [[ -n ${uefi_secureboot_key} && -n ${uefi_secureboot_cert} ]] || [[ -n ${uefi_secureboot_cert_name} ]] || [[ "$sign_tool" = "sbctl" ]]; then
+                case $sign_tool in
+                    sbsign)
+                        if sbsign \
+                            ${uefi_secureboot_engine:+--engine "$uefi_secureboot_engine"} \
+                            --key "${uefi_secureboot_key}" \
+                            --cert "${uefi_secureboot_cert}" \
+                            --output "$outfile" "${uefi_outdir}/linux.efi" \
+                            && sbverify --cert "${uefi_secureboot_cert}" "$outfile" > /dev/null 2>&1; then
+                            dinfo "*** Creating signed UEFI image file '$outfile' done ***"
+                            _signed=true
+                        fi
+                        ;;
+                    systemd-sbsign)
+                        # no verification done as systemd-sbsign does not yet support that
+                        if systemd-sbsign \
+                            sign \
+                            --private-key "$uefi_secureboot_key" \
+                            --certificate "$uefi_secureboot_cert" \
+                            ${uefi_secureboot_cert_provider:+--certificate-source "provider:${uefi_secureboot_cert_provider}"} \
+                            ${uefi_secureboot_engine:+--private-key-source "engine:${uefi_secureboot_engine}"} \
+                            ${uefi_secureboot_key_provider:+--private-key-source "provider:{$uefi_secureboot_key_provider}"} \
+                            "${uefi_outdir}/linux.efi" \
+                            --output "$outfile"; then
+                            dinfo "*** Creating signed UEFI image file '$outfile' done ***"
+                            _signed=true
+                        fi
+                        ;;
+                    pesign)
+                        if pesign \
+                            --sign \
+                            --force \
+                            ${uefi_secureboot_cert_dir:+--certdir "$uefi_secureboot_cert_dir"} \
+                            --certificate "${uefi_secureboot_cert_name}" \
+                            --in "${uefi_outdir}/linux.efi" \
+                            --out "$outfile" \
+                            && [[ ! "$(pesign -S --in "${outfile}")" =~ 'No signatures found' ]]; then
+                            dinfo "*** Creating signed UEFI image file '$outfile' done ***"
+                            _signed=true
+                        fi
+                        ;;
+                    sbctl)
+                        if sbctl \
+                            sign \
+                            "${uefi_outdir}/linux.efi" \
+                            --output "$outfile" \
+                            && [[ ! "$(sbctl verify "${outfile}")" =~ 'is not signed' ]]; then
+                            dinfo "*** Creating signed UEFI image file '$outfile' done ***"
+                            _signed=true
+                        fi
+                        ;;
+                esac
+                if [[ -z $_signed ]]; then
                     rm -f -- "$outfile"
                     dfatal "*** Creating signed UEFI image file '$outfile' failed ***"
                     exit 1
